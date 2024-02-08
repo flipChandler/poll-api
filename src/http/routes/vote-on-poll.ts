@@ -2,6 +2,8 @@ import z from "zod";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../../lib/prisma";
 import { FastifyInstance } from "fastify";
+import { redis } from "../../lib/redis";
+import { voting } from "../../utils/voting-pub-sub";
 
 export async function voteOnPoll(app: FastifyInstance) {
     app.post('/polls/:pollId/votes', async (request, response) => {
@@ -36,6 +38,14 @@ export async function voteOnPoll(app: FastifyInstance) {
                         id: userPreviousVoteOnPoll.id
                     }
                 });
+                
+                // está decrementando a votacao na opção antiga
+                const votes = await redis.zincrby(pollId, -1, userPreviousVoteOnPoll.pollOptionId);
+
+                voting.publish(pollId, {
+                    pollOptionId: userPreviousVoteOnPoll.pollOptionId,
+                    votes: Number(votes),
+                });
             } else if (userPreviousVoteOnPoll) {
                 return response.status(400).send({ message: 'You already vote on this poll' });
             }
@@ -58,6 +68,16 @@ export async function voteOnPoll(app: FastifyInstance) {
                 pollId,
                 pollOptionId
             }
+        });
+
+        // key para criar o ranking
+        // increment 1
+        // opcao escolhida | está incrementando em 1, essa opção (pollOptionId) dentro da enquete (pollId)
+        const votes = await redis.zincrby(pollId, 1, pollOptionId);
+
+        voting.publish(pollId, {
+            pollOptionId,
+            votes: Number(votes),
         });
 
         return response.status(201).send();
